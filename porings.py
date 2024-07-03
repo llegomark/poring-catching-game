@@ -12,6 +12,7 @@ import pygame
 import random
 import time
 import os
+
 os.environ['QT_QPA_PLATFORM'] = 'xcb'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 absl.logging.set_verbosity(absl.logging.ERROR)
@@ -62,8 +63,6 @@ except pygame.error as e:
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
                        min_detection_confidence=0.7, min_tracking_confidence=0.5)
-
-# Load Poring images
 
 
 def load_poring_images() -> List[np.ndarray]:
@@ -296,6 +295,43 @@ def point_in_triangle(point: np.ndarray, triangle: np.ndarray) -> bool:
     return not (has_neg and has_pos)
 
 
+def process_frame(frame: np.ndarray, game_state: GameState, hands: mp.solutions.hands.Hands):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(rgb_frame)
+
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            hand_area = get_hand_area(hand_landmarks.landmark)
+            hand_area[:, 0] *= CONFIG["SCREEN_WIDTH"]
+            hand_area[:, 1] *= CONFIG["SCREEN_HEIGHT"]
+            hand_area = hand_area.astype(int)
+
+            cv2.polylines(frame, [hand_area], True, (0, 255, 0), 3)
+
+            for poring in game_state.porings.copy():
+                if point_in_triangle(poring.position, hand_area):
+                    handle_poring_catch(game_state, poring)
+
+    for poring in game_state.porings.copy():
+        poring.move()
+        elapsed_time = time.time() - poring.start_time
+        if elapsed_time > game_state.poring_lifetime:
+            handle_poring_escape(game_state, poring)
+
+    # Spawn new Porings based on spawn interval and current Poring count
+    game_state.spawn_timer += 1 / CONFIG["FPS"]
+    if game_state.spawn_timer >= game_state.spawn_interval or len(game_state.porings) < game_state.min_porings:
+        if len(game_state.porings) < game_state.max_porings:
+            game_state.porings.append(Poring(game_state.level, poring_images))
+            game_state.spawn_timer = 0
+
+    if game_state.lives <= 0:
+        game_state.game_over = True
+        save_high_score(game_state.score)
+
+    draw_game(frame, game_state)
+
+
 def main():
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG["SCREEN_WIDTH"])
@@ -313,7 +349,6 @@ def main():
 
     try:
         while True:
-
             ret, frame = cap.read()
             if not ret:
                 logger.error("Failed to capture frame")
@@ -330,41 +365,7 @@ def main():
             elif game_state.paused:
                 show_pause_screen(frame)
             else:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = hands.process(rgb_frame)
-
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        hand_area = get_hand_area(hand_landmarks.landmark)
-                        hand_area[:, 0] *= CONFIG["SCREEN_WIDTH"]
-                        hand_area[:, 1] *= CONFIG["SCREEN_HEIGHT"]
-                        hand_area = hand_area.astype(int)
-
-                        cv2.polylines(frame, [hand_area], True, (0, 255, 0), 3)
-
-                        for poring in game_state.porings.copy():
-                            if point_in_triangle(poring.position, hand_area):
-                                handle_poring_catch(game_state, poring)
-
-                for poring in game_state.porings.copy():
-                    poring.move()
-                    elapsed_time = time.time() - poring.start_time
-                    if elapsed_time > game_state.poring_lifetime:
-                        handle_poring_escape(game_state, poring)
-
-                # Spawn new Porings based on spawn interval and current Poring count
-                game_state.spawn_timer += 1 / CONFIG["FPS"]
-                if game_state.spawn_timer >= game_state.spawn_interval or len(game_state.porings) < game_state.min_porings:
-                    if len(game_state.porings) < game_state.max_porings:
-                        game_state.porings.append(
-                            Poring(game_state.level, poring_images))
-                        game_state.spawn_timer = 0
-
-                if game_state.lives <= 0:
-                    game_state.game_over = True
-                    save_high_score(game_state.score)
-
-                draw_game(frame, game_state)
+                process_frame(frame, game_state, hands)
 
             cv2.imshow('Poring Catching Game', frame)
 
