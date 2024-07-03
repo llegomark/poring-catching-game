@@ -1,3 +1,10 @@
+import absl.logging
+from mediapipe.framework.formats import landmark_pb2
+from collections import deque
+from typing import List, Dict
+import logging
+from PIL import Image
+import json
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -5,16 +12,16 @@ import pygame
 import random
 import time
 import os
-import json
-from PIL import Image
-import logging
+os.environ['QT_QPA_PLATFORM'] = 'xcb'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+absl.logging.set_verbosity(absl.logging.ERROR)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-CONFIG = {
+CONFIG: Dict[str, any] = {
     "CATCHING_RADIUS": 60,
     "INITIAL_LIVES": 5,
     "INITIAL_PORING_COUNT": 5,
@@ -59,7 +66,7 @@ hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
 # Load Poring images
 
 
-def load_poring_images():
+def load_poring_images() -> List[np.ndarray]:
     images = []
     for filename in os.listdir(CONFIG["ASSET_PATH"]):
         if filename.startswith("RO_Poring(SD)") and filename.endswith(".png"):
@@ -79,11 +86,9 @@ if not poring_images:
     logger.error("Failed to load any Poring images. Exiting.")
     exit(1)
 
-# Poring class
-
 
 class Poring:
-    def __init__(self, level):
+    def __init__(self, level: int, images: List[np.ndarray]):
         margin = CONFIG["SPAWN_MARGIN"]
         self.position = np.array([
             random.randint(margin, CONFIG["SCREEN_WIDTH"] - margin),
@@ -92,7 +97,7 @@ class Poring:
         speed = min(1 + (level - 1) * 0.2, CONFIG["MAX_PORING_SPEED"])
         self.velocity = np.random.uniform(-speed, speed, 2)
         self.start_time = time.time()
-        self.image = random.choice(poring_images)
+        self.image = random.choice(images)
         self.value = random.randint(1, 5)
         self.angle = random.uniform(0, 2 * np.pi)
         self.angular_speed = random.uniform(0.5, 1.5)
@@ -101,24 +106,17 @@ class Poring:
         t = time.time() - self.start_time
         self.angle += self.angular_speed * 0.1
 
-        # Use sine wave for smoother movement
-        offset = np.array([
-            np.sin(self.angle) * 5,
-            np.cos(self.angle) * 5
-        ])
-
+        offset = np.array([np.sin(self.angle), np.cos(self.angle)]) * 5
         new_position = self.position + self.velocity + offset
 
-        # Bounce off the edges
-        if new_position[0] < 0 or new_position[0] > CONFIG["SCREEN_WIDTH"]:
-            self.velocity[0] *= -1
-        if new_position[1] < 0 or new_position[1] > CONFIG["SCREEN_HEIGHT"]:
-            self.velocity[1] *= -1
-
+        # Vectorized boundary check
+        out_of_bounds = np.logical_or(new_position < 0, new_position > [
+                                      CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]])
+        self.velocity = np.where(out_of_bounds, -self.velocity, self.velocity)
         self.position = np.clip(new_position, [0, 0], [
                                 CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]])
 
-    def draw(self, frame):
+    def draw(self, frame: np.ndarray):
         x, y = self.position.astype(int)
         y_offset = int(20 * np.sin(time.time() * 5))
 
@@ -136,8 +134,6 @@ class Poring:
             frame[y_start:y_end, x_start:x_end, c] = (alpha_s * poring_resized[:, :, c] +
                                                       alpha_l * frame[y_start:y_end, x_start:x_end, c])
 
-# Game state
-
 
 class GameState:
     def __init__(self):
@@ -146,7 +142,7 @@ class GameState:
         self.level = 1
         self.game_over = False
         self.paused = False
-        self.porings = [Poring(self.level)
+        self.porings = [Poring(self.level, poring_images)
                         for _ in range(CONFIG["INITIAL_PORING_COUNT"])]
         self.poring_lifetime = CONFIG["INITIAL_PORING_LIFETIME"]
         self.combo = 0
@@ -155,14 +151,19 @@ class GameState:
         self.spawn_interval = 1.0  # Decreased initial spawn interval
         self.min_porings = CONFIG["INITIAL_PORING_COUNT"]
         self.max_porings = CONFIG["INITIAL_PORING_COUNT"] * 2
+        self.frame_times = deque(maxlen=60)  # For FPS calculation
 
     def reset(self):
         self.__init__()
 
-# High score management
+    def update_fps(self) -> float:
+        self.frame_times.append(time.time())
+        if len(self.frame_times) > 1:
+            return len(self.frame_times) / (self.frame_times[-1] - self.frame_times[0])
+        return 0
 
 
-def load_high_scores():
+def load_high_scores() -> List[Dict[str, any]]:
     try:
         with open("high_scores.json", "r") as f:
             return json.load(f)
@@ -170,7 +171,7 @@ def load_high_scores():
         return []
 
 
-def save_high_score(score):
+def save_high_score(score: int):
     high_scores = load_high_scores()
     high_scores.append(
         {"score": score, "date": time.strftime("%Y-%m-%d %H:%M:%S")})
@@ -179,10 +180,8 @@ def save_high_score(score):
     with open("high_scores.json", "w") as f:
         json.dump(high_scores, f)
 
-# Game logic functions
 
-
-def handle_poring_catch(game_state, poring):
+def handle_poring_catch(game_state: GameState, poring: Poring):
     game_state.score += poring.value
     catch_sound.play()
     current_time = time.time()
@@ -202,13 +201,13 @@ def handle_poring_catch(game_state, poring):
         game_state.max_porings = min(game_state.max_porings + 2, 25)
 
 
-def handle_poring_escape(game_state, poring):
+def handle_poring_escape(game_state: GameState, poring: Poring):
     game_state.lives -= 1
     life_lost_sound.play()
     game_state.porings.remove(poring)
 
 
-def center_text(frame, text, font, scale, thickness, y_offset=0):
+def center_text(frame: np.ndarray, text: str, font: int, scale: float, thickness: int, y_offset: int = 0):
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     text_x = (frame.shape[1] - text_size[0]) // 2
     text_y = (frame.shape[0] + text_size[1]) // 2 + y_offset
@@ -216,7 +215,7 @@ def center_text(frame, text, font, scale, thickness, y_offset=0):
                 scale, (255, 255, 255), thickness)
 
 
-def draw_game(frame, game_state):
+def draw_game(frame: np.ndarray, game_state: GameState):
     for poring in game_state.porings:
         poring.draw(frame)
         elapsed_time = time.time() - poring.start_time
@@ -237,7 +236,7 @@ def draw_game(frame, game_state):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
 
 
-def show_start_screen(frame):
+def show_start_screen(frame: np.ndarray):
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
     center_text(frame, "Poring Catching Game",
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale * 2, 3, -100)
@@ -249,7 +248,7 @@ def show_start_screen(frame):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 80)
 
 
-def show_game_over_screen(frame, game_state):
+def show_game_over_screen(frame: np.ndarray, game_state: GameState):
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
     center_text(frame, "GAME OVER", cv2.FONT_HERSHEY_SIMPLEX,
                 font_scale * 2.5, 3, -100)
@@ -261,7 +260,7 @@ def show_game_over_screen(frame, game_state):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 80)
 
 
-def show_pause_screen(frame):
+def show_pause_screen(frame: np.ndarray):
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
     center_text(frame, "PAUSED", cv2.FONT_HERSHEY_SIMPLEX,
                 font_scale * 2.5, 3, -100)
@@ -273,7 +272,7 @@ def show_pause_screen(frame):
                 cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 60)
 
 
-def get_hand_area(landmarks):
+def get_hand_area(landmarks: landmark_pb2.NormalizedLandmarkList) -> np.ndarray:
     wrist = np.array([landmarks[mp_hands.HandLandmark.WRIST].x,
                      landmarks[mp_hands.HandLandmark.WRIST].y])
     thumb_tip = np.array([landmarks[mp_hands.HandLandmark.THUMB_TIP].x,
@@ -283,8 +282,8 @@ def get_hand_area(landmarks):
     return np.array([wrist, thumb_tip, pinky_tip])
 
 
-def point_in_triangle(point, triangle):
-    def sign(p1, p2, p3):
+def point_in_triangle(point: np.ndarray, triangle: np.ndarray) -> bool:
+    def sign(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float:
         return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
 
     d1 = sign(point, triangle[0], triangle[1])
@@ -295,8 +294,6 @@ def point_in_triangle(point, triangle):
     has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
 
     return not (has_neg and has_pos)
-
-# Main game loop
 
 
 def main():
@@ -314,88 +311,90 @@ def main():
     cv2.resizeWindow('Poring Catching Game',
                      CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"])
 
-    while True:
-        start_time = time.time()
+    try:
+        while True:
 
-        ret, frame = cap.read()
-        if not ret:
-            logger.error("Failed to capture frame")
-            break
+            ret, frame = cap.read()
+            if not ret:
+                logger.error("Failed to capture frame")
+                break
 
-        frame = cv2.flip(frame, 1)
-        frame = cv2.resize(
-            frame, (CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]))
+            frame = cv2.flip(frame, 1)
+            frame = cv2.resize(
+                frame, (CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]))
 
-        if start_screen:
-            show_start_screen(frame)
-
-        elif game_state.game_over:
-            show_game_over_screen(frame, game_state)
-        elif game_state.paused:
-            show_pause_screen(frame)
-        else:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(rgb_frame)
-
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    hand_area = get_hand_area(hand_landmarks.landmark)
-                    hand_area[:, 0] *= CONFIG["SCREEN_WIDTH"]
-                    hand_area[:, 1] *= CONFIG["SCREEN_HEIGHT"]
-                    hand_area = hand_area.astype(int)
-
-                    cv2.polylines(frame, [hand_area], True, (0, 255, 0), 3)
-
-                    for poring in game_state.porings.copy():
-                        if point_in_triangle(poring.position, hand_area):
-                            handle_poring_catch(game_state, poring)
-
-            for poring in game_state.porings.copy():
-                poring.move()
-                elapsed_time = time.time() - poring.start_time
-                if elapsed_time > game_state.poring_lifetime:
-                    handle_poring_escape(game_state, poring)
-
-            # Spawn new Porings based on spawn interval and current Poring count
-            game_state.spawn_timer += 1 / CONFIG["FPS"]
-            if game_state.spawn_timer >= game_state.spawn_interval or len(game_state.porings) < game_state.min_porings:
-                if len(game_state.porings) < game_state.max_porings:
-                    game_state.porings.append(Poring(game_state.level))
-                    game_state.spawn_timer = 0
-
-            if game_state.lives <= 0:
-                game_state.game_over = True
-                save_high_score(game_state.score)
-
-            draw_game(frame, game_state)
-
-        cv2.imshow('Poring Catching Game', frame)
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27:  # ESC
-            break
-        elif key == ord(' '):
             if start_screen:
-                start_screen = False
+                show_start_screen(frame)
             elif game_state.game_over:
+                show_game_over_screen(frame, game_state)
+            elif game_state.paused:
+                show_pause_screen(frame)
+            else:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(rgb_frame)
+
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        hand_area = get_hand_area(hand_landmarks.landmark)
+                        hand_area[:, 0] *= CONFIG["SCREEN_WIDTH"]
+                        hand_area[:, 1] *= CONFIG["SCREEN_HEIGHT"]
+                        hand_area = hand_area.astype(int)
+
+                        cv2.polylines(frame, [hand_area], True, (0, 255, 0), 3)
+
+                        for poring in game_state.porings.copy():
+                            if point_in_triangle(poring.position, hand_area):
+                                handle_poring_catch(game_state, poring)
+
+                for poring in game_state.porings.copy():
+                    poring.move()
+                    elapsed_time = time.time() - poring.start_time
+                    if elapsed_time > game_state.poring_lifetime:
+                        handle_poring_escape(game_state, poring)
+
+                # Spawn new Porings based on spawn interval and current Poring count
+                game_state.spawn_timer += 1 / CONFIG["FPS"]
+                if game_state.spawn_timer >= game_state.spawn_interval or len(game_state.porings) < game_state.min_porings:
+                    if len(game_state.porings) < game_state.max_porings:
+                        game_state.porings.append(
+                            Poring(game_state.level, poring_images))
+                        game_state.spawn_timer = 0
+
+                if game_state.lives <= 0:
+                    game_state.game_over = True
+                    save_high_score(game_state.score)
+
+                draw_game(frame, game_state)
+
+            cv2.imshow('Poring Catching Game', frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC
+                break
+            elif key == ord(' '):
+                if start_screen:
+                    start_screen = False
+                elif game_state.game_over:
+                    game_state.reset()
+            elif key == ord('p'):
+                game_state.paused = not game_state.paused
+            elif key == ord('r'):
                 game_state.reset()
-        elif key == ord('p'):
-            game_state.paused = not game_state.paused
-        elif key == ord('r'):
-            game_state.reset()
 
-        # FPS control
-        clock.tick(CONFIG["FPS"])
+            # FPS control
+            clock.tick(CONFIG["FPS"])
 
-        # Performance logging
-        end_time = time.time()
-        fps = 1 / (end_time - start_time)
-        logger.debug(f"FPS: {fps:.2f}")
+            # Performance logging
+            fps = game_state.update_fps()
+            logger.debug(f"FPS: {fps:.2f}")
 
-    cap.release()
-    cv2.destroyAllWindows()
-    background_music.stop()
-    pygame.quit()
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        background_music.stop()
+        pygame.quit()
 
 
 if __name__ == "__main__":
