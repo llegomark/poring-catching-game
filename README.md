@@ -17,7 +17,7 @@ Poring Catching Game is an exciting computer vision-based game that brings the b
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.12+
 - OpenCV
 - MediaPipe
 - Pygame
@@ -43,7 +43,7 @@ Poring Catching Game is an exciting computer vision-based game that brings the b
 
 4. Run the game:
    ```
-   python poring_game.py
+   python porings.py
    ```
 
 ## How to Play
