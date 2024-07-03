@@ -61,8 +61,12 @@ except pygame.error as e:
 
 # Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
-                       min_detection_confidence=0.7, min_tracking_confidence=0.5)
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=2,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.5
+)
 
 
 def load_poring_images() -> List[np.ndarray]:
@@ -101,7 +105,7 @@ class Poring:
         self.angle = random.uniform(0, 2 * np.pi)
         self.angular_speed = random.uniform(0.5, 1.5)
 
-    def move(self):
+    def move(self) -> None:
         t = time.time() - self.start_time
         self.angle += self.angular_speed * 0.1
 
@@ -109,13 +113,18 @@ class Poring:
         new_position = self.position + self.velocity + offset
 
         # Vectorized boundary check
-        out_of_bounds = np.logical_or(new_position < 0, new_position > [
-                                      CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]])
+        out_of_bounds = np.logical_or(
+            new_position < 0,
+            new_position > [CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]]
+        )
         self.velocity = np.where(out_of_bounds, -self.velocity, self.velocity)
-        self.position = np.clip(new_position, [0, 0], [
-                                CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]])
+        self.position = np.clip(
+            new_position,
+            [0, 0],
+            [CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]]
+        )
 
-    def draw(self, frame: np.ndarray):
+    def draw(self, frame: np.ndarray) -> None:
         x, y = self.position.astype(int)
         y_offset = int(20 * np.sin(time.time() * 5))
 
@@ -130,35 +139,41 @@ class Poring:
         alpha_l = 1.0 - alpha_s
 
         for c in range(0, 3):
-            frame[y_start:y_end, x_start:x_end, c] = (alpha_s * poring_resized[:, :, c] +
-                                                      alpha_l * frame[y_start:y_end, x_start:x_end, c])
+            frame[y_start:y_end, x_start:x_end, c] = (
+                alpha_s * poring_resized[:, :, c] +
+                alpha_l * frame[y_start:y_end, x_start:x_end, c]
+            )
 
 
 class GameState:
     def __init__(self):
-        self.score = 0
-        self.lives = CONFIG["INITIAL_LIVES"]
-        self.level = 1
-        self.game_over = False
-        self.paused = False
-        self.porings = [Poring(self.level, poring_images)
-                        for _ in range(CONFIG["INITIAL_PORING_COUNT"])]
-        self.poring_lifetime = CONFIG["INITIAL_PORING_LIFETIME"]
-        self.combo = 0
-        self.last_catch_time = 0
-        self.spawn_timer = 0
-        self.spawn_interval = 1.0  # Decreased initial spawn interval
-        self.min_porings = CONFIG["INITIAL_PORING_COUNT"]
-        self.max_porings = CONFIG["INITIAL_PORING_COUNT"] * 2
-        self.frame_times = deque(maxlen=60)  # For FPS calculation
+        self.score: int = 0
+        self.lives: int = CONFIG["INITIAL_LIVES"]
+        self.level: int = 1
+        self.game_over: bool = False
+        self.paused: bool = False
+        self.porings: List[Poring] = [
+            Poring(self.level, poring_images)
+            for _ in range(CONFIG["INITIAL_PORING_COUNT"])
+        ]
+        self.poring_lifetime: float = CONFIG["INITIAL_PORING_LIFETIME"]
+        self.combo: int = 0
+        self.last_catch_time: float = 0
+        self.spawn_timer: float = 0
+        self.spawn_interval: float = 1.0  # Decreased initial spawn interval
+        self.min_porings: int = CONFIG["INITIAL_PORING_COUNT"]
+        self.max_porings: int = CONFIG["INITIAL_PORING_COUNT"] * 2
+        self.frame_times: deque = deque(maxlen=60)  # For FPS calculation
 
-    def reset(self):
+    def reset(self) -> None:
         self.__init__()
 
     def update_fps(self) -> float:
         self.frame_times.append(time.time())
         if len(self.frame_times) > 1:
-            return len(self.frame_times) / (self.frame_times[-1] - self.frame_times[0])
+            return len(self.frame_times) / (
+                self.frame_times[-1] - self.frame_times[0]
+            )
         return 0
 
 
@@ -170,17 +185,19 @@ def load_high_scores() -> List[Dict[str, any]]:
         return []
 
 
-def save_high_score(score: int):
+def save_high_score(score: int) -> None:
     high_scores = load_high_scores()
-    high_scores.append(
-        {"score": score, "date": time.strftime("%Y-%m-%d %H:%M:%S")})
+    high_scores.append({
+        "score": score,
+        "date": time.strftime("%Y-%m-%d %H:%M:%S")
+    })
     high_scores.sort(key=lambda x: x["score"], reverse=True)
     high_scores = high_scores[:10]  # Keep only top 10
     with open("high_scores.json", "w") as f:
         json.dump(high_scores, f)
 
 
-def handle_poring_catch(game_state: GameState, poring: Poring):
+def handle_poring_catch(game_state: GameState, poring: Poring) -> None:
     game_state.score += poring.value
     catch_sound.play()
     current_time = time.time()
@@ -200,84 +217,205 @@ def handle_poring_catch(game_state: GameState, poring: Poring):
         game_state.max_porings = min(game_state.max_porings + 2, 25)
 
 
-def handle_poring_escape(game_state: GameState, poring: Poring):
+def handle_poring_escape(game_state: GameState, poring: Poring) -> None:
     game_state.lives -= 1
     life_lost_sound.play()
     game_state.porings.remove(poring)
 
 
-def center_text(frame: np.ndarray, text: str, font: int, scale: float, thickness: int, y_offset: int = 0):
+def center_text(
+    frame: np.ndarray,
+    text: str,
+    font: int,
+    scale: float,
+    thickness: int,
+    y_offset: int = 0
+) -> None:
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     text_x = (frame.shape[1] - text_size[0]) // 2
     text_y = (frame.shape[0] + text_size[1]) // 2 + y_offset
-    cv2.putText(frame, text, (text_x, text_y), font,
-                scale, (255, 255, 255), thickness)
+    cv2.putText(
+        frame, text, (text_x, text_y), font, scale, (255, 255, 255), thickness
+    )
 
 
-def draw_game(frame: np.ndarray, game_state: GameState):
+def draw_game(frame: np.ndarray, game_state: GameState) -> None:
     for poring in game_state.porings:
         poring.draw(frame)
         elapsed_time = time.time() - poring.start_time
         if elapsed_time > game_state.poring_lifetime - 2:
             if int(elapsed_time * 5) % 2 == 0:
-                cv2.circle(frame, tuple(poring.position.astype(int)),
-                           60, (0, 0, 255), 3)
+                cv2.circle(
+                    frame,
+                    tuple(poring.position.astype(int)),
+                    60,
+                    (0, 0, 255),
+                    3
+                )
 
     font_scale = CONFIG["SCREEN_HEIGHT"] / \
         480  # Scale font based on screen height
-    cv2.putText(frame, f"Score: {game_state.score}", (20, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
-    cv2.putText(frame, f"Lives: {game_state.lives}", (20, 100),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
-    cv2.putText(frame, f"Level: {game_state.level}", (20, 150),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
-    cv2.putText(frame, f"Combo: {game_state.combo}", (20, 200),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
+    cv2.putText(
+        frame,
+        f"Score: {game_state.score}",
+        (20, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        2
+    )
+    cv2.putText(
+        frame,
+        f"Lives: {game_state.lives}",
+        (20, 100),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        2
+    )
+    cv2.putText(
+        frame,
+        f"Level: {game_state.level}",
+        (20, 150),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        2
+    )
+    cv2.putText(
+        frame,
+        f"Combo: {game_state.combo}",
+        (20, 200),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        2
+    )
 
 
-def show_start_screen(frame: np.ndarray):
+def show_start_screen(frame: np.ndarray) -> None:
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
-    center_text(frame, "Poring Catching Game",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale * 2, 3, -100)
-    center_text(frame, "Catch Porings with both hands!",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, -20)
-    center_text(frame, "Press SPACE to start",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 40)
-    center_text(frame, "Press ESC to quit",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 80)
+    center_text(
+        frame,
+        "Poring Catching Game",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale * 2,
+        3,
+        -100
+    )
+    center_text(
+        frame,
+        "Catch Porings with both hands!",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        -20
+    )
+    center_text(
+        frame,
+        "Press SPACE to start",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        40
+    )
+    center_text(
+        frame,
+        "Press ESC to quit",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        80
+    )
 
 
-def show_game_over_screen(frame: np.ndarray, game_state: GameState):
+def show_game_over_screen(frame: np.ndarray, game_state: GameState) -> None:
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
-    center_text(frame, "GAME OVER", cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale * 2.5, 3, -100)
-    center_text(frame, f"Final Score: {
-                game_state.score}", cv2.FONT_HERSHEY_SIMPLEX, font_scale * 1.5, 2, -20)
-    center_text(frame, "Press SPACE to restart",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 40)
-    center_text(frame, "Press ESC to quit",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 80)
+    center_text(
+        frame,
+        "GAME OVER",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale * 2.5,
+        3,
+        -100
+    )
+    center_text(
+        frame,
+        f"Final Score: {game_state.score}",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale * 1.5,
+        2,
+        -20
+    )
+    center_text(
+        frame,
+        "Press SPACE to restart",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        40
+    )
+    center_text(
+        frame,
+        "Press ESC to quit",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        80
+    )
 
 
-def show_pause_screen(frame: np.ndarray):
+def show_pause_screen(frame: np.ndarray) -> None:
     font_scale = CONFIG["SCREEN_HEIGHT"] / 480
-    center_text(frame, "PAUSED", cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale * 2.5, 3, -100)
-    center_text(frame, "Press P to resume",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, -20)
-    center_text(frame, "Press R to restart",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 20)
-    center_text(frame, "Press ESC to quit",
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2, 60)
+    center_text(
+        frame,
+        "PAUSED",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale * 2.5,
+        3,
+        -100
+    )
+    center_text(
+        frame,
+        "Press P to resume",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        -20
+    )
+    center_text(
+        frame,
+        "Press R to restart",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        20
+    )
+    center_text(
+        frame,
+        "Press ESC to quit",
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        2,
+        60
+    )
 
 
-def get_hand_area(landmarks: landmark_pb2.NormalizedLandmarkList) -> np.ndarray:
-    wrist = np.array([landmarks[mp_hands.HandLandmark.WRIST].x,
-                     landmarks[mp_hands.HandLandmark.WRIST].y])
-    thumb_tip = np.array([landmarks[mp_hands.HandLandmark.THUMB_TIP].x,
-                         landmarks[mp_hands.HandLandmark.THUMB_TIP].y])
-    pinky_tip = np.array([landmarks[mp_hands.HandLandmark.PINKY_TIP].x,
-                         landmarks[mp_hands.HandLandmark.PINKY_TIP].y])
+def get_hand_area(
+    landmarks: landmark_pb2.NormalizedLandmarkList
+) -> np.ndarray:
+    wrist = np.array([
+        landmarks[mp_hands.HandLandmark.WRIST].x,
+        landmarks[mp_hands.HandLandmark.WRIST].y
+    ])
+    thumb_tip = np.array([
+        landmarks[mp_hands.HandLandmark.THUMB_TIP].x,
+        landmarks[mp_hands.HandLandmark.THUMB_TIP].y
+    ])
+    pinky_tip = np.array([
+        landmarks[mp_hands.HandLandmark.PINKY_TIP].x,
+        landmarks[mp_hands.HandLandmark.PINKY_TIP].y
+    ])
     return np.array([wrist, thumb_tip, pinky_tip])
 
 
@@ -295,7 +433,11 @@ def point_in_triangle(point: np.ndarray, triangle: np.ndarray) -> bool:
     return not (has_neg and has_pos)
 
 
-def process_frame(frame: np.ndarray, game_state: GameState, hands: mp.solutions.hands.Hands):
+def process_frame(
+    frame: np.ndarray,
+    game_state: GameState,
+    hands: mp.solutions.hands.Hands
+) -> None:
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
 
@@ -320,7 +462,8 @@ def process_frame(frame: np.ndarray, game_state: GameState, hands: mp.solutions.
 
     # Spawn new Porings based on spawn interval and current Poring count
     game_state.spawn_timer += 1 / CONFIG["FPS"]
-    if game_state.spawn_timer >= game_state.spawn_interval or len(game_state.porings) < game_state.min_porings:
+    if (game_state.spawn_timer >= game_state.spawn_interval or
+            len(game_state.porings) < game_state.min_porings):
         if len(game_state.porings) < game_state.max_porings:
             game_state.porings.append(Poring(game_state.level, poring_images))
             game_state.spawn_timer = 0
@@ -332,7 +475,7 @@ def process_frame(frame: np.ndarray, game_state: GameState, hands: mp.solutions.
     draw_game(frame, game_state)
 
 
-def main():
+def main() -> None:
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG["SCREEN_WIDTH"])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG["SCREEN_HEIGHT"])
@@ -344,8 +487,11 @@ def main():
     clock = pygame.time.Clock()
 
     cv2.namedWindow('Poring Catching Game', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('Poring Catching Game',
-                     CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"])
+    cv2.resizeWindow(
+        'Poring Catching Game',
+        CONFIG["SCREEN_WIDTH"],
+        CONFIG["SCREEN_HEIGHT"]
+    )
 
     try:
         while True:
@@ -356,7 +502,9 @@ def main():
 
             frame = cv2.flip(frame, 1)
             frame = cv2.resize(
-                frame, (CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"]))
+                frame,
+                (CONFIG["SCREEN_WIDTH"], CONFIG["SCREEN_HEIGHT"])
+            )
 
             if start_screen:
                 show_start_screen(frame)
